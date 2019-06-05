@@ -12,7 +12,6 @@
   "dependencies": {
     "dotenv": "^8.0.0",
     "node-fetch": "^2.6.0",
-    "youtube-dl": "^2.0.0",
-    "youtube-video-api": "^0.3.7"
+    "youtube-dl": "^2.0.0"
   }
 }

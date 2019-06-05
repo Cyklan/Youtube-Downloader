@@ -2,79 +2,134 @@ const fs = require("fs")
 const path = require("path")
 const fetch = require("node-fetch")
 const youtubedl = require("youtube-dl")
-const Youtube = require("youtube-video-api")
 require("dotenv").config()
-const youtube = Youtube({
-    video: {
-        part: "status,snippet"
-    }
-})
 
 const apiKey = process.env.YOUTUBE_API_KEY
 
-const channelID = "UCD1z-dZ1ZNyk8wca31_DxIA"
-let videos = []
 let downloaded = 0
+let nextPageToken
+let requests = 0
+let videoCount
+let videos = []
 
-async function fetchYoutubeVideos(channel) {
-    let nextPageToken
+function checkForDirectory() {
+    if (fs.existsSync("./videos")) return;
+    console.log("Creating directory 'videos'")
+    fs.mkdirSync("./videos")
+}
 
-
+async function getChannelUploads(channelID) {
     process.stdout.write("Searching for channel...")
     
-    const uploads = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=${channel}&key=${apiKey}`)
-        .then(response => response.json())
-        .then(response => response.items[0].contentDetails.relatedPlaylists.uploads)
+    const uploads = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=${channelID}&key=${apiKey}`)
+    .then(response => response.json())
+    .then(response => response.items[0].contentDetails.relatedPlaylists.uploads)
+    return uploads
+}
 
-    process.stdout.clearLine()
-    process.stdout.cursorTo(0)
-    process.stdout.write("Downloading...\n")
-        const playlistResponse = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=5&playlistId=${uploads}&key=${apiKey}`)
-        .then(response => response.json())
+async function getNextVideos(playlistId) {
+    const response = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=5&playlistId=${playlistId}&pageToken=${nextPageToken}&key=${apiKey}`)
+    .then(res => res.json())
+    nextPageToken = response.nextPageToken
+    response.items.forEach(item => videos.push(item.contentDetails.videoId))
+}
+
+async function getNextVideo(playlistId) {
+    return new Promise(async (resolve, reject) => {
+        const response = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=1&playlistId=${playlistId}&pageToken=${nextPageToken}&key=${apiKey}`)
+        .then(res => res.json())
+        nextPageToken = response.nextPageToken
+        resolve(response.items[0].contentDetails.videoId)
+    })
+}
+
+async function downloadFromChannel(channel) {
+    process.stdout.write("Searching for channel...")
+    playlistId = await getChannelUploads(channel)
+    await downloadFromPlaylist(playlistId)
+}
+
+async function downloadFromPlaylist(playlistId) {
+    const playlistResponse = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=5&playlistId=${playlistId}&key=${apiKey}`)
+    .then(response => response.json())
     
-    const videoCount = playlistResponse.pageInfo.totalResults
+    videoCount = playlistResponse.pageInfo.totalResults
     const maxResults = playlistResponse.pageInfo.resultsPerPage
-    const requests = Math.floor(videoCount / maxResults)
+    requests = videoCount - maxResults
     nextPageToken = playlistResponse.nextPageToken
     playlistResponse.items.forEach(item => videos.push(item.contentDetails.videoId))
-    process.stdout.write(`${0} / ${videoCount}`)
+    process.stdout.clearLine()
+    process.stdout.cursorTo(0)
+    console.log(`Found ${videoCount} videos`)
+    console.log("Downloading...")
+    process.stdout.write(`Finished 0 / ${videoCount}`)
+
+    downloadVideos(playlistId)
+}
+
+async function downloadVideos(playlistId) {
     await videos.forEach(video => {
         let vid = youtubedl(`http://youtube.com/watch?v=${video}`)
         vid.on("info", info => {
+            vid.pipe(fs.createWriteStream(`./videos/${info._filename}.mp4`))
+        })
+        vid.on("end", async () => {
             process.stdout.clearLine()
             process.stdout.cursorTo(0)
-            process.stdout.write(`${++downloaded} / ${videoCount}`)
-            vid.pipe(fs.createWriteStream(`./songs/${info._filename}.mp3`))
+            process.stdout.write(`Finished: ${++downloaded} / ${videoCount}`)
+            requests--
+            if (requests >= 0) {
+                const videoId = await getNextVideo(playlistId)
+                await downloadNextVideo(videoId)
+            }
         })
     })
-    videos = []
-    for (let i = 0; i < requests; i++) {
-        const response = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=5&playlistId=${uploads}&pageToken=${nextPageToken}&key=${apiKey}`)
-        .then(res => res.json())
-        nextPageToken = response.nextPageToken
-        response.items.forEach(item => videos.push(item.contentDetails.videoId))
-
-        await videos.forEach(video => {
-            let vid = youtubedl(`http://youtube.com/watch?v=${video}`)
-            vid.on("info", info => {
-                process.stdout.clearLine()
-                process.stdout.cursorTo(0)
-                process.stdout.write(`${++downloaded} / ${videoCount}`)
-                vid.pipe(fs.createWriteStream(`./songs/${info._filename}.mp3`))
-            })
-        })
-        videos = []
-    }
-    
-    // for (let i = 0; i < 10; i++) {
-    //     let vid = youtubedl(`http://youtube.com/watch?v=${videos[i]}`)
-    //     let videoName
-    //     vid.on("info", info => {
-    //         console.log(`Downloading ${info._filename}`)
-    //         videoName = `${info._filename}.mp3`
-    //         vid.pipe(fs.createWriteStream(`${videoName}.mp3`))
-    //     })
-    // }
 }
 
-fetchYoutubeVideos(channelID)
+function downloadNextVideo(videoId) {
+    let vid = youtubedl(`http://youtube.com/watch?v=${videoId}`)
+    vid.on("info", info => {
+        vid.pipe(fs.createWriteStream(`./videos/${info._filename}.mp4`))
+    })
+    vid.on("end", async () => {
+        process.stdout.clearLine()
+            process.stdout.cursorTo(0)
+            process.stdout.write(`Finished: ${++downloaded} / ${videoCount}`)
+            requests--
+            if (requests >= 0) {
+                const videoId = await getNextVideo(playlistId)
+                await downloadNextVideo(videoId)
+            }
+    })
+}
+
+function howToUse() {
+    console.log("How to use")
+    console.log("node index.js [-c|-p] [id]")
+    console.log("\n\t-c = download channel uploads")
+    console.log("\t-p = download playlist videos")
+    console.log("\n\tid = channel / playlist-id")
+    process.exit(0)
+}
+
+if (process.argv.length <= 2) {
+    howToUse()
+}
+
+if (process.argv.length == 3) {
+    howToUse()
+}
+
+if (process.argv.length >= 5) {
+    howToUse()
+}
+
+if (process.argv[2].toLowerCase() == "-c") {
+    checkForDirectory()
+    downloadFromChannel(process.argv[3])
+} else if (process.argv[2].toLowerCase() == "-p") {
+    checkForDirectory()
+    downloadFromPlaylist(process.argv[3])
+} else {
+    howToUse()
+}
