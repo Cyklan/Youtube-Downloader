@@ -8,7 +8,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "GPL-3.0",
   "dependencies": {
     "dotenv": "^8.0.0",
     "node-fetch": "^2.6.0",
