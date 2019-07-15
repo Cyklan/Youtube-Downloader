@@ -11,6 +11,7 @@ let nextPageToken
 let requests = 0
 let videoCount
 let videos = []
+let playlistId
 
 function checkForDirectory() {
     if (fs.existsSync("./videos")) return;
@@ -34,7 +35,7 @@ async function getNextVideos(playlistId) {
     response.items.forEach(item => videos.push(item.contentDetails.videoId))
 }
 
-async function getNextVideo(playlistId) {
+async function getNextVideo() {
     return new Promise(async (resolve, reject) => {
         const response = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=1&playlistId=${playlistId}&pageToken=${nextPageToken}&key=${apiKey}`)
         .then(res => res.json())
@@ -46,10 +47,10 @@ async function getNextVideo(playlistId) {
 async function downloadFromChannel(channel) {
     process.stdout.write("Searching for channel...")
     playlistId = await getChannelUploads(channel)
-    await downloadFromPlaylist(playlistId)
+    await downloadFromPlaylist()
 }
 
-async function downloadFromPlaylist(playlistId) {
+async function downloadFromPlaylist() {
     const playlistResponse = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=5&playlistId=${playlistId}&key=${apiKey}`)
     .then(response => response.json())
     
@@ -64,25 +65,12 @@ async function downloadFromPlaylist(playlistId) {
     console.log("Downloading...")
     process.stdout.write(`Finished 0 / ${videoCount}`)
 
-    downloadVideos(playlistId)
+    downloadVideos()
 }
 
-async function downloadVideos(playlistId) {
+async function downloadVideos() {
     await videos.forEach(video => {
-        let vid = youtubedl(`http://youtube.com/watch?v=${video}`)
-        vid.on("info", info => {
-            vid.pipe(fs.createWriteStream(`./videos/${info._filename}.mp4`))
-        })
-        vid.on("end", async () => {
-            process.stdout.clearLine()
-            process.stdout.cursorTo(0)
-            process.stdout.write(`Finished: ${++downloaded} / ${videoCount}`)
-            requests--
-            if (requests >= 0) {
-                const videoId = await getNextVideo(playlistId)
-                await downloadNextVideo(videoId)
-            }
-        })
+        downloadNextVideo(video)
     })
 }
 
@@ -97,7 +85,7 @@ function downloadNextVideo(videoId) {
             process.stdout.write(`Finished: ${++downloaded} / ${videoCount}`)
             requests--
             if (requests >= 0) {
-                const videoId = await getNextVideo(playlistId)
+                const videoId = await getNextVideo()
                 await downloadNextVideo(videoId)
             }
     })
@@ -112,15 +100,7 @@ function howToUse() {
     process.exit(0)
 }
 
-if (process.argv.length <= 2) {
-    howToUse()
-}
-
-if (process.argv.length == 3) {
-    howToUse()
-}
-
-if (process.argv.length >= 5) {
+if (process.argv.length !== 4) {
     howToUse()
 }
 
